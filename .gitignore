@@ -1,0 +1,24 @@
+# キャッシュ・一時ファイル
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit ローカル設定（シークレットは絶対にコミットしない）
+.streamlit/secrets.toml
+
+# Python 仮想環境
+.venv/
+venv/
+
+# 元データ・出力ファイル（アップロード不要）
+アーカイブ/
+*.xls
+*.xlsx
+*_Processed.csv
+
+# ローカル専用スクリプト
+pp_import.py
+pp_app.py
+launch.vbs
+create_icon.py
+icon.ico
