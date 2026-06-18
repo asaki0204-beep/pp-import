@@ -841,7 +841,7 @@ def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
 
 # ── Streamlit UI ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="PayPal/Payoneer/Wise 加工ツール", layout="centered")
-st.title("PayPal / Payoneer / Wise 取引明細加工ツール")
+st.markdown("# PayPal / Payoneer / Wise<br>取引明細加工ツール", unsafe_allow_html=True)
 
 uploaded = st.file_uploader(
     "CSVファイルを選択（複数可・種類は自動判定）",
