@@ -91,6 +91,24 @@ def _detect_engine_from_bytes(data: bytes) -> str:
     return "xlrd"
 
 
+# ── CSV / Excel 読み込み（拡張子で自動判定） ──────────────────────────────────
+def read_table_from_bytes(data: bytes, filename: str) -> pd.DataFrame:
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    if ext not in ("xlsx", "xls"):
+        return read_csv_from_bytes(data)
+
+    primary = _detect_engine_from_bytes(data)
+    engines = [primary] + [e for e in ("openpyxl", "xlrd") if e != primary]
+    last_err: Exception | None = None
+    for engine in engines:
+        try:
+            return pd.read_excel(io.BytesIO(data), engine=engine)
+        except Exception as e:
+            last_err = e
+            continue
+    raise ValueError(f"Excelの読み込みに失敗しました: {last_err}")
+
+
 # ── MURC Excel パーサー ────────────────────────────────────────────────────────
 def _parse_murc_monthly_usd(df_raw: pd.DataFrame) -> dict:
     """USD 専用パーサー → {(year, month): rate}"""
@@ -323,9 +341,9 @@ def get_rate_mc(rates_mc: dict, date_val, currency: str):
 
 
 # ── ファイル種類自動検出 ───────────────────────────────────────────────────────
-def detect_file_type(data: bytes) -> str:
+def detect_file_type(data: bytes, filename: str) -> str:
     try:
-        df = read_csv_from_bytes(data)
+        df = read_table_from_bytes(data, filename)
         cols = set(str(c).strip() for c in df.columns)
     except Exception:
         return "不明"
@@ -460,7 +478,7 @@ def detect_years_from_files(uploaded_files) -> set:
         try:
             data = uf.read()
             uf.seek(0)
-            df = read_csv_from_bytes(data).head(200)
+            df = read_table_from_bytes(data, uf.name).head(200)
             for col in df.columns:
                 if any(kw in str(col) for kw in ("Date", "日付", "date")):
                     for val in df[col].dropna().astype(str):
@@ -844,8 +862,8 @@ st.set_page_config(page_title="PayPal/Payoneer/Wise 加工ツール", layout="ce
 st.markdown("# PayPal / Payoneer / Wise<br>取引明細加工ツール", unsafe_allow_html=True)
 
 uploaded = st.file_uploader(
-    "CSVファイルを選択（複数可・種類は自動判定）",
-    type=["csv"],
+    "CSV/Excelファイルを選択（複数可・種類は自動判定）",
+    type=["csv", "xlsx", "xls"],
     accept_multiple_files=True,
 )
 
@@ -862,7 +880,7 @@ if uploaded:
     for uf in uploaded:
         data  = uf.read()
         uf.seek(0)
-        ftype = detect_file_type(data)
+        ftype = detect_file_type(data, uf.name)
         file_info.append({"ファイル名": uf.name, "検出種類": ftype})
 
     st.dataframe(
@@ -875,7 +893,7 @@ if uploaded:
     if unknown:
         st.warning(
             f"{len(unknown)} 件のファイルの種類を判定できませんでした。"
-            "PayPal / Payoneer / Wise の CSV ファイルを選択してください。"
+            "PayPal / Payoneer / Wise の CSV または Excel ファイルを選択してください。"
         )
 
     # ── 処理実行ボタン ──
@@ -903,7 +921,7 @@ if uploaded:
             uf.seek(0)
             try:
                 data  = uf.read()
-                df    = read_csv_from_bytes(data)
+                df    = read_table_from_bytes(data, uf.name)
                 ftype = info["検出種類"]
                 if ftype == "PayPal":
                     paypal_dfs.append(df)
