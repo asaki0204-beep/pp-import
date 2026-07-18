@@ -260,14 +260,62 @@ def _parse_murc_archive(df_raw: pd.DataFrame) -> dict:
     return rates
 
 
+def _parse_murc_daily_month_end(df_raw: pd.DataFrame) -> dict:
+    """日次(data)シート → 各月最終営業日のTTM → {(year, month, currency): 月末レート}"""
+    header_row_idx = None
+    for i in range(min(5, len(df_raw))):
+        vals = [str(v).strip() for v in df_raw.iloc[i]]
+        if "DATE" in vals:
+            header_row_idx = i
+            break
+    if header_row_idx is None:
+        return {}
+
+    name_row = df_raw.iloc[max(header_row_idx - 2, 0)]
+    col_map: dict = {}
+    for j, v in enumerate(name_row):
+        m = re.search(r"[（(]([A-Z]{3})[）)]", str(v))
+        if m:
+            col_map[m.group(1)] = j + 2  # 通貨ブロック(TTS,TTB,TTM)の3列目がTTM
+
+    if not col_map:
+        return {}
+
+    rates: dict = {}
+    for _, row in df_raw.iloc[header_row_idx + 1:].iterrows():
+        date_val = row.iloc[0]
+        if not hasattr(date_val, "year"):
+            continue
+        y, m = date_val.year, date_val.month
+        for ccy, col_idx in col_map.items():
+            try:
+                val = row.iloc[col_idx]
+                if pd.isna(val):
+                    continue
+                ttm = float(val)
+                if ttm > 0:
+                    rates[(y, m, ccy)] = ttm
+            except (ValueError, IndexError, TypeError):
+                pass
+    return rates
+
+
 def load_rates_from_bytes(data: bytes) -> dict:
-    """MURC Excel バイト列からレート辞書を返す → {(year, month, ccy): rate}"""
+    """MURC Excel バイト列からレート辞書を返す → {(year, month, ccy): 月末レート}"""
     primary  = _detect_engine_from_bytes(data)
     engines  = ["xlrd", "openpyxl"] if primary == "xlrd" else ["openpyxl", "xlrd"]
 
     for engine in engines:
         try:
-            xf     = pd.ExcelFile(io.BytesIO(data), engine=engine)
+            xf = pd.ExcelFile(io.BytesIO(data), engine=engine)
+
+            data_sheet = next((s for s in xf.sheet_names if "data" in str(s).lower()), None)
+            if data_sheet is not None:
+                df_daily = pd.read_excel(io.BytesIO(data), sheet_name=data_sheet, header=None, engine=engine)
+                rates = _parse_murc_daily_month_end(df_daily)
+                if rates:
+                    return rates
+
             sheet  = next((s for s in xf.sheet_names if "月毎" in str(s)), xf.sheet_names[0])
             df_raw = pd.read_excel(io.BytesIO(data), sheet_name=sheet, header=None, engine=engine)
 
@@ -334,10 +382,16 @@ def ensure_rates(years: set, log: list) -> dict:
     return store["rates"]
 
 
+def get_prev_month_end_rate(rates_mc: dict, year: int, month: int, currency: str):
+    """指定月の取引に適用するレート＝前月末レート"""
+    py, pm = _prev_ym(year, month)
+    return rates_mc.get((py, pm, currency))
+
+
 def get_rate_mc(rates_mc: dict, date_val, currency: str):
     if pd.isna(date_val):
         return None
-    return rates_mc.get((date_val.year, date_val.month, currency))
+    return get_prev_month_end_rate(rates_mc, date_val.year, date_val.month, currency)
 
 
 # ── ファイル種類自動検出 ───────────────────────────────────────────────────────
@@ -403,8 +457,8 @@ def _insert_fx_rows(
             net_amt   = get_net_amount(first_row)
             if bal_after is not None and net_amt is not None:
                 prev_balance = bal_after - net_amt
-                curr_rate = rates_mc.get((py, pm, currency))
-                next_rate = rates_mc.get((fy, fm, currency))
+                curr_rate = get_prev_month_end_rate(rates_mc, py, pm, currency)
+                next_rate = get_prev_month_end_rate(rates_mc, fy, fm, currency)
                 if (curr_rate is not None and next_rate is not None
                         and prev_balance != 0 and not pd.isna(prev_balance)):
                     fx_row = build_fx_row(
@@ -419,8 +473,8 @@ def _insert_fx_rows(
         balance     = month_end_bal[ym]
         if balance == 0:
             continue
-        curr_rate = rates_mc.get((year, month, currency))
-        next_rate = rates_mc.get((ny, nm, currency))
+        curr_rate = get_prev_month_end_rate(rates_mc, year, month, currency)
+        next_rate = get_prev_month_end_rate(rates_mc, ny, nm, currency)
         if curr_rate is None or next_rate is None:
             continue
         last_row       = records[month_last_idx[ym]]
@@ -908,8 +962,11 @@ if uploaded:
         log.append(f"対象年: {sorted(years)}")
         log.append("--- 為替レート ---")
 
+        # 前月末レートを使うため、1月の取引に対応できるよう前年分も取得
+        fetch_years = years | {y - 1 for y in years}
+
         with st.spinner("為替レートを取得中..."):
-            rates_mc = ensure_rates(years, log)
+            rates_mc = ensure_rates(fetch_years, log)
 
         # ファイルを種類別に分類
         paypal_dfs       = []
