@@ -1,6 +1,7 @@
 import io
 import math
 import re
+import zipfile
 from datetime import date
 
 import pandas as pd
@@ -1022,7 +1023,24 @@ if uploaded:
     # ── ダウンロードボタン ──
     if st.session_state.get("_results"):
         st.subheader("ダウンロード")
-        for fname, csv_bytes in st.session_state["_results"].items():
+
+        results = st.session_state["_results"]
+        if len(results) > 1:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fname, csv_bytes in results.items():
+                    zf.writestr(f"{fname}.csv", csv_bytes)
+            st.download_button(
+                label="⬇ すべて一括ダウンロード（ZIP）",
+                data=zip_buf.getvalue(),
+                file_name="pp_import_processed.zip",
+                mime="application/zip",
+                use_container_width=True,
+                type="primary",
+            )
+            st.divider()
+
+        for fname, csv_bytes in results.items():
             st.download_button(
                 label=f"⬇ {fname}.csv",
                 data=csv_bytes,
