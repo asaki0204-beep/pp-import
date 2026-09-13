@@ -666,6 +666,17 @@ def process_payoneer_new(rates_mc: dict, dfs: list, log: list) -> dict:
     df = pd.concat(dfs, ignore_index=True)
     df.columns = [str(c).strip() for c in df.columns]
 
+    if "Status" in df.columns:
+        before = len(df)
+        df = df[
+            ~df["Status"].astype(str).str.strip().str.casefold().isin(
+                ("canceled", "cancelled")
+            )
+        ].copy()
+        removed = before - len(df)
+        if removed:
+            log.append(f"  Payoneer（新形式）: Status=Canceledの行を{removed}件除外")
+
     df["_date"] = pd.to_datetime(df["Date"], format="%d %b, %Y", errors="coerce")
     df["Date"]  = df["_date"].dt.strftime("%Y/%m/%d")
     df["Amount"] = parse_number(df["Amount"])
@@ -718,6 +729,17 @@ def process_payoneer_old(rates_mc: dict, dfs: list, log: list) -> dict:
     """Payoneer 旧形式 CSV → {key: DataFrame}"""
     df = pd.concat(dfs, ignore_index=True)
     df.columns = [str(c).strip() for c in df.columns]
+
+    if "Status" in df.columns:
+        before = len(df)
+        df = df[
+            ~df["Status"].astype(str).str.strip().str.casefold().isin(
+                ("canceled", "cancelled")
+            )
+        ].copy()
+        removed = before - len(df)
+        if removed:
+            log.append(f"  Payoneer（旧形式）: Status=Canceledの行を{removed}件除外")
 
     df["_date"] = pd.to_datetime(df["Transaction Date"], format="%m/%d/%Y", errors="coerce")
     df["Transaction Date"] = df["_date"].dt.strftime("%Y年%m月%d日")
